@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #0e0d0b;
+  --ink-soft: #2a2823;
+  --paper: #ede4d3;
+  --paper-shade: #dccfb2;
+  --cinnabar: #c0392b;
+  --cinnabar-deep: #962d22;
+  --gold: #c9a24b;
+  --gold-soft: #8a7434;
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: "Noto Serif SC", serif;
+    background-color: var(--ink);
+    color: var(--paper);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior: none;
+  }
+
+  /* 隐藏滚动条但保留滚动 */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  button {
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+  input {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+@layer components {
+  /* 纸面：用于内容承载区 */
+  .surface-paper {
+    background-color: var(--paper);
+    background-image:
+      radial-gradient(at 18% 12%, rgba(120, 80, 30, 0.05), transparent 55%),
+      radial-gradient(at 82% 88%, rgba(120, 80, 30, 0.08), transparent 55%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    color: var(--ink);
+  }
+
+  /* 墨面：用于外壳/顶栏 */
+  .surface-ink {
+    background-color: var(--ink);
+    background-image:
+      radial-gradient(at 50% -10%, rgba(201, 162, 75, 0.1), transparent 55%),
+      radial-gradient(at 50% 110%, rgba(150, 45, 34, 0.08), transparent 50%);
+  }
+
+  /* 朱砂印章按钮 */
+  .seal-btn {
+    background: var(--cinnabar);
+    color: var(--paper);
+    font-family: "ZCOOL XiaoWei", serif;
+    letter-spacing: 0.08em;
+    box-shadow: 0 2px 0 var(--cinnabar-deep), inset 0 0 0 2px rgba(0, 0, 0, 0.06);
+    transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.15s ease;
+  }
+  .seal-btn:active {
+    transform: translateY(2px);
+    box-shadow: 0 0 0 var(--cinnabar-deep), inset 0 0 0 2px rgba(0, 0, 0, 0.06);
+  }
+  .seal-btn:disabled {
+    background: #4a463f;
+    color: #8a8378;
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+
+  /* 描金轮廓按钮 */
+  .ghost-btn {
+    border: 1px solid var(--gold-soft);
+    color: var(--gold);
+    font-family: "ZCOOL XiaoWei", serif;
+    letter-spacing: 0.08em;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .ghost-btn:active {
+    background: rgba(201, 162, 75, 0.12);
+  }
+  .ghost-btn:disabled {
+    border-color: #4a463f;
+    color: #6b6258;
+  }
+
+  /* 印章角标 */
+  .seal-stamp {
+    color: var(--cinnabar);
+    border: 2px solid var(--cinnabar);
+    font-family: "ZCOOL XiaoWei", serif;
+    border-radius: 6px;
+    transform: rotate(-4deg);
+  }
+
+  /* 仿宣纸分隔线 */
+  .ink-rule {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      rgba(14, 13, 11, 0.25),
+      transparent
+    );
+  }
+}
+
+/* 文字选区配色 */
+::selection {
+  background: var(--cinnabar);
+  color: var(--paper);
+}
