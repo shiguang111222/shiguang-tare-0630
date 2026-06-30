@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "../store";
 import { ROLE_INFO } from "../../shared/types";
 import { cn } from "@/lib/utils";
+
+const MAX_LEN = 4;
+const LONG_PRESS_MS = 450;
 
 export default function Play() {
   const view = useGame((s) => s.view)!;
@@ -11,15 +14,21 @@ export default function Play() {
 
   const me = view.players.find((p) => p.id === view.myId)!;
   const isDuanmo = view.myRole === "断墨";
-  // 选词模式：逐字点击，必须连续相邻。selected 存连续索引（已按升序）。
-  // 限制 2-4 字（与玩家词长度一致），防止误选一大段。
-  const MAX_LEN = 4;
-  const [selected, setSelected] = useState<number[]>([]);
+  // 微信式选区：长按起手，两端手柄拖拽调长度。selStart/selEnd 闭区间字符索引。
+  const [selStart, setSelStart] = useState<number | null>(null);
+  const [selEnd, setSelEnd] = useState<number | null>(null);
   const [selChoice, setSelChoice] = useState<number | null>(null);
+
+  // 长按定时器、拖拽中标记
+  const longPressTimer = useRef<number | null>(null);
+  const longPressStartIdx = useRef<number | null>(null);
+  const dragHandle = useRef<"start" | "end" | null>(null);
+  const charRefs = useRef<(HTMLSpanElement | null)[]>([]);
 
   // 子轮切换或已提交时清空选择
   useEffect(() => {
-    setSelected([]);
+    setSelStart(null);
+    setSelEnd(null);
     setSelChoice(null);
   }, [view.subRound, view.myDone]);
 
@@ -36,38 +45,109 @@ export default function Play() {
   const eliminated = !me.alive;
   const readOnly = view.myDone || eliminated;
 
-  const selSet = useMemo(() => new Set(selected), [selected]);
-  const range = selected.length > 0
-    ? { a: selected[0], b: selected[selected.length - 1] }
-    : null;
+  const hasSel = selStart !== null && selEnd !== null;
+  const selLen = hasSel ? selEnd! - selStart! + 1 : 0;
 
-  const onCharTap = (i: number) => {
-    if (readOnly || isDuanmo) return;
-    setSelected((cur) => {
-      // 已选中再点 → 撤回该字（从末尾退栈，或点任意已选则清到该字之前）
-      if (cur.includes(i)) {
-        const idx = cur.indexOf(i);
-        return cur.slice(0, idx);
-      }
-      // 空段：直接起头
-      if (cur.length === 0) return [i];
-      // 已满上限：忽略，保持当前段（防误选超长）
-      if (cur.length >= MAX_LEN) return cur;
-      // 必须与当前段首尾相邻（左扩或右扩），否则视为重开新段
-      const last = cur[cur.length - 1];
-      const first = cur[0];
-      if (i === last + 1) return [...cur, i];          // 右扩
-      if (i === first - 1) return [i, ...cur];          // 左扩
-      // 非相邻 → 重开新段（避免误触把远处的字接进来）
-      return [i];
-    });
+  // 找到字符索引落在哪个字符上（基于 data-idx）
+  const idxFromPoint = (x: number, y: number): number | null => {
+    const el = document.elementFromPoint(x, y) as HTMLElement | null;
+    if (!el) return null;
+    const attr = el.getAttribute("data-idx");
+    if (attr === null) return null;
+    const n = parseInt(attr, 10);
+    return isNaN(n) ? null : n;
   };
 
-  const clearSel = () => setSelected([]);
+  // 长按起手：触摸开始时记录索引并启动定时器
+  const onCharTouchStart = (i: number) => {
+    if (readOnly || isDuanmo) return;
+    if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    longPressStartIdx.current = i;
+    longPressTimer.current = window.setTimeout(() => {
+      // 长按触发：以该字为起点，向后选 2 字（若到末尾则向前）
+      const len = view.storyText.length;
+      let a = i;
+      let b = i;
+      if (i + 1 < len) b = i + 1;
+      else if (i - 1 >= 0) a = i - 1;
+      setSelStart(a);
+      setSelEnd(b);
+      if (navigator.vibrate) navigator.vibrate(15);
+    }, LONG_PRESS_MS);
+  };
+
+  // 触摸移动或结束 → 取消长按定时器（如果还没触发）
+  const cancelLongPress = () => {
+    if (longPressTimer.current) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  // PC 鼠标：按下立即起选区（不需要长按）
+  const onCharMouseDown = (i: number) => {
+    if (readOnly || isDuanmo) return;
+    // 仅在无选区或点在选区外时重置；点在手柄上的逻辑由手柄接管
+    if (hasSel && i >= selStart! && i <= selEnd!) return;
+    const len = view.storyText.length;
+    let a = i;
+    let b = i;
+    if (i + 1 < len) b = i + 1;
+    else if (i - 1 >= 0) a = i - 1;
+    setSelStart(a);
+    setSelEnd(b);
+  };
+
+  // 手柄按下：进入拖拽模式
+  const onHandleDown = (e: React.PointerEvent, which: "start" | "end") => {
+    if (!hasSel) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragHandle.current = which;
+  };
+
+  // 全局指针移动：处理手柄拖拽（同时兼容触摸和鼠标）
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (!dragHandle.current || !hasSel) return;
+      const idx = idxFromPoint(e.clientX, e.clientY);
+      if (idx === null) return;
+      e.preventDefault();
+      const start = selStart!;
+      const end = selEnd!;
+      if (dragHandle.current === "start") {
+        // 起点手柄：不能超过 end，不能让长度超 MAX_LEN
+        if (idx > end) return;
+        if (end - idx + 1 > MAX_LEN) return;
+        if (idx !== start) setSelStart(idx);
+      } else {
+        // 末点手柄：不能小于 start，不能超 MAX_LEN
+        if (idx < start) return;
+        if (idx - start + 1 > MAX_LEN) return;
+        if (idx !== end) setSelEnd(idx);
+      }
+    };
+    const onUp = () => {
+      dragHandle.current = null;
+    };
+    document.addEventListener("pointermove", onMove, { passive: false });
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+    return () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+    };
+  }, [hasSel, selStart, selEnd]);
+
+  const clearSel = () => {
+    setSelStart(null);
+    setSelEnd(null);
+  };
 
   const doGuess = () => {
-    if (!range || selected.length < 2) return;
-    submitGuess(range.a, range.b + 1);
+    if (!hasSel || selLen < 2) return;
+    submitGuess(selStart!, selEnd! + 1);
     clearSel();
   };
 
@@ -76,8 +156,6 @@ export default function Play() {
     submitChoice(selChoice);
     setSelChoice(null);
   };
-
-  const selLen = selected.length;
 
   return (
     <div className="h-full flex flex-col">
@@ -155,23 +233,47 @@ export default function Play() {
               const c = view.storyText[i];
               const pr = prunedSet.has(i);
               const own = isOwn(i);
-              const isSel = selSet.has(i);
+              const isSel = hasSel && i >= selStart! && i <= selEnd!;
+              const isEdgeStart = hasSel && i === selStart!;
+              const isEdgeEnd = hasSel && i === selEnd;
               return (
                 <span
                   key={i}
-                  onClick={() => onCharTap(i)}
+                  ref={(el) => { charRefs.current[i] = el; }}
+                  data-idx={i}
+                  onTouchStart={(e) => { e.stopPropagation(); onCharTouchStart(i); }}
+                  onTouchMove={(e) => { e.stopPropagation(); cancelLongPress(); }}
+                  onTouchEnd={(e) => { e.stopPropagation(); cancelLongPress(); }}
+                  onMouseDown={(e) => { e.stopPropagation(); onCharMouseDown(i); }}
                   style={{ touchAction: "manipulation" }}
                   className={cn(
-                    "transition-colors select-none",
-                    // 加大点击热区，手机更易点准
+                    "relative transition-colors select-none",
                     "px-0.5 leading-[2.1]",
                     !readOnly && !isDuanmo && "cursor-pointer",
                     own && !isSel && "border-b-2 border-gold/70",
                     pr && "line-through opacity-25",
-                    isSel && "bg-cinnabar text-paper rounded-sm",
+                    isSel && "bg-cinnabar/30 text-ink rounded-sm",
+                    isSel && isEdgeStart && "rounded-l-sm",
+                    isSel && isEdgeEnd && "rounded-r-sm",
                   )}
                 >
                   {c}
+                  {/* 起点手柄：选区第一个字左下方的小蓝点 */}
+                  {isEdgeStart && (
+                    <span
+                      onPointerDown={(e) => onHandleDown(e, "start")}
+                      style={{ touchAction: "none" }}
+                      className="absolute -left-1 -bottom-0.5 w-3 h-3 rounded-full bg-cinnabar border border-paper shadow-md cursor-ew-resize z-10"
+                    />
+                  )}
+                  {/* 末点手柄：选区最后字右下方的小蓝点 */}
+                  {isEdgeEnd && (
+                    <span
+                      onPointerDown={(e) => onHandleDown(e, "end")}
+                      style={{ touchAction: "none" }}
+                      className="absolute -right-1 -bottom-0.5 w-3 h-3 rounded-full bg-cinnabar border border-paper shadow-md cursor-ew-resize z-10"
+                    />
+                  )}
                 </span>
               );
             })}
@@ -253,35 +355,26 @@ export default function Play() {
                 拭 去 一 字
               </button>
             )}
-            {range ? (
+            {hasSel ? (
               <>
                 <button
                   onClick={doGuess}
                   disabled={selLen < 2}
                   className="seal-btn w-full py-3 rounded-sm tracking-[0.3em]"
                 >
-                  {selLen >= 2 ? `猜此段 · ${selLen}字` : `再点一字（${selLen}/2）`}
+                  {selLen >= 2 ? `猜此段 · ${selLen}字` : `拖动蓝点扩到2字（${selLen}/2）`}
                 </button>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setSelected((cur) => cur.slice(0, -1))}
-                    disabled={selLen === 0}
-                    className="ghost-btn flex-1 py-2 rounded-sm text-sm"
-                  >
-                    撤销一字
-                  </button>
-                  <button onClick={clearSel} className="ghost-btn flex-1 py-2 rounded-sm text-sm">
-                    清除
-                  </button>
-                </div>
+                <button onClick={clearSel} className="ghost-btn w-full py-2 rounded-sm text-sm">
+                  清除选区
+                </button>
               </>
             ) : (
-              <p className="text-center text-paper/40 text-xs font-sub py-2">
+              <p className="text-center text-paper/40 text-xs font-sub py-2 leading-relaxed">
                 {view.myRole === "省笔"
                   ? view.canPrune
-                    ? "可拭去一字 · 或逐字点选成段猜词"
-                    : "逐字点选成段猜词 · 点已选字可撤回"
-                  : "逐字点选成段猜词 · 点已选字可撤回"}
+                    ? "可拭去一字 · 或长按故事选段猜词"
+                    : "长按故事选段 · 拖两端蓝点调长度"
+                  : "长按故事选段 · 拖两端蓝点调长度"}
               </p>
             )}
           </div>
