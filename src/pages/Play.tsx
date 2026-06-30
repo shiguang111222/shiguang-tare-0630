@@ -11,14 +11,15 @@ export default function Play() {
 
   const me = view.players.find((p) => p.id === view.myId)!;
   const isDuanmo = view.myRole === "断墨";
-  const [anchor, setAnchor] = useState<number | null>(null);
-  const [head, setHead] = useState<number | null>(null);
+  // 选词模式：逐字点击，必须连续相邻。selected 存连续索引（已按升序）。
+  // 限制 2-4 字（与玩家词长度一致），防止误选一大段。
+  const MAX_LEN = 4;
+  const [selected, setSelected] = useState<number[]>([]);
   const [selChoice, setSelChoice] = useState<number | null>(null);
 
   // 子轮切换或已提交时清空选择
   useEffect(() => {
-    setAnchor(null);
-    setHead(null);
+    setSelected([]);
     setSelChoice(null);
   }, [view.subRound, view.myDone]);
 
@@ -35,35 +36,37 @@ export default function Play() {
   const eliminated = !me.alive;
   const readOnly = view.myDone || eliminated;
 
-  const range =
-    anchor !== null && head !== null
-      ? { a: Math.min(anchor, head), b: Math.max(anchor, head) }
-      : null;
+  const selSet = useMemo(() => new Set(selected), [selected]);
+  const range = selected.length > 0
+    ? { a: selected[0], b: selected[selected.length - 1] }
+    : null;
 
   const onCharTap = (i: number) => {
     if (readOnly || isDuanmo) return;
-    if (anchor === null) {
-      setAnchor(i);
-      setHead(null);
-    } else if (head === null) {
-      if (i === anchor) {
-        setAnchor(null);
-      } else {
-        setHead(i);
+    setSelected((cur) => {
+      // 已选中再点 → 撤回该字（从末尾退栈，或点任意已选则清到该字之前）
+      if (cur.includes(i)) {
+        const idx = cur.indexOf(i);
+        return cur.slice(0, idx);
       }
-    } else {
-      setAnchor(i);
-      setHead(null);
-    }
+      // 空段：直接起头
+      if (cur.length === 0) return [i];
+      // 已满上限：忽略，保持当前段（防误选超长）
+      if (cur.length >= MAX_LEN) return cur;
+      // 必须与当前段首尾相邻（左扩或右扩），否则视为重开新段
+      const last = cur[cur.length - 1];
+      const first = cur[0];
+      if (i === last + 1) return [...cur, i];          // 右扩
+      if (i === first - 1) return [i, ...cur];          // 左扩
+      // 非相邻 → 重开新段（避免误触把远处的字接进来）
+      return [i];
+    });
   };
 
-  const clearSel = () => {
-    setAnchor(null);
-    setHead(null);
-  };
+  const clearSel = () => setSelected([]);
 
   const doGuess = () => {
-    if (!range) return;
+    if (!range || selected.length < 2) return;
     submitGuess(range.a, range.b + 1);
     clearSel();
   };
@@ -74,7 +77,7 @@ export default function Play() {
     setSelChoice(null);
   };
 
-  const selLen = range ? range.b - range.a + 1 : 0;
+  const selLen = selected.length;
 
   return (
     <div className="h-full flex flex-col">
@@ -152,17 +155,20 @@ export default function Play() {
               const c = view.storyText[i];
               const pr = prunedSet.has(i);
               const own = isOwn(i);
-              const isSel = range ? i >= range.a && i <= range.b : false;
+              const isSel = selSet.has(i);
               return (
                 <span
                   key={i}
                   onClick={() => onCharTap(i)}
+                  style={{ touchAction: "manipulation" }}
                   className={cn(
-                    "transition-colors",
+                    "transition-colors select-none",
+                    // 加大点击热区，手机更易点准
+                    "px-0.5 leading-[2.1]",
                     !readOnly && !isDuanmo && "cursor-pointer",
                     own && !isSel && "border-b-2 border-gold/70",
                     pr && "line-through opacity-25",
-                    isSel && "bg-cinnabar text-paper rounded-sm px-0.5",
+                    isSel && "bg-cinnabar text-paper rounded-sm",
                   )}
                 >
                   {c}
@@ -251,21 +257,31 @@ export default function Play() {
               <>
                 <button
                   onClick={doGuess}
+                  disabled={selLen < 2}
                   className="seal-btn w-full py-3 rounded-sm tracking-[0.3em]"
                 >
-                  猜此段 · {selLen}字
+                  {selLen >= 2 ? `猜此段 · ${selLen}字` : `再点一字（${selLen}/2）`}
                 </button>
-                <button onClick={clearSel} className="ghost-btn w-full py-2 rounded-sm text-sm">
-                  清除
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSelected((cur) => cur.slice(0, -1))}
+                    disabled={selLen === 0}
+                    className="ghost-btn flex-1 py-2 rounded-sm text-sm"
+                  >
+                    撤销一字
+                  </button>
+                  <button onClick={clearSel} className="ghost-btn flex-1 py-2 rounded-sm text-sm">
+                    清除
+                  </button>
+                </div>
               </>
             ) : (
               <p className="text-center text-paper/40 text-xs font-sub py-2">
                 {view.myRole === "省笔"
                   ? view.canPrune
-                    ? "可拭去一字 · 或点首末字成段猜词"
-                    : "点首字与末字 · 择段猜词"
-                  : "点首字与末字 · 择段猜词"}
+                    ? "可拭去一字 · 或逐字点选成段猜词"
+                    : "逐字点选成段猜词 · 点已选字可撤回"
+                  : "逐字点选成段猜词 · 点已选字可撤回"}
               </p>
             )}
           </div>
