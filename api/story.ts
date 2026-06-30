@@ -1,6 +1,6 @@
 // 故事引擎：调用 DeepSeek 生成叙事，并定位玩家词
 import OpenAI from 'openai';
-import type { Segment } from '../shared/types.js';
+import type { Segment, Theme } from '../shared/types.js';
 
 const apiKey = process.env.DEEPSEEK_API_KEY || '';
 const client = apiKey
@@ -20,10 +20,13 @@ export interface GeneratedStory {
 
 const PUNCT = /[，。！？、；：""''「」（）()\[\]【】…—\-\s,.;:!?]/;
 
-function buildPrompt(words: StoryWord[], multiplier: number): { system: string; user: string } {
+function buildPrompt(words: StoryWord[], multiplier: number, theme: Theme | null): { system: string; user: string } {
   const n = words.length;
   const targetLen = 10 + n * multiplier;
   const list = words.map((w, i) => `(${i + 1}) "${w.word}"`).join('、');
+  const themeLine = theme
+    ? `\n7. 整段叙事须围绕「${theme}」这一主题展开，但要自然融入、不生硬点题，让读者读出该主题的氛围即可。`
+    : '';
   const system =
     '你是一名文字游戏《词匣》的故事织手。你的任务是把若干玩家给出的词语，编织成一段连贯、完整、逻辑清晰的中文短叙事，让这些词语自然地隐藏在文脉之中，读起来不突兀。这是猜词博弈游戏：词语藏得越自然，越难被猜出。';
   const user =
@@ -34,7 +37,8 @@ function buildPrompt(words: StoryWord[], multiplier: number): { system: string; 
     `3. 叙事须连贯、有画面感、逻辑通顺，像一个微型小场景，可有人物、动作、环境。\n` +
     `4. 目标字数约 ${targetLen} 字（不含标点）。宁可略多，不可少于 ${Math.floor(targetLen * 0.8)} 字。字数不足是最严重的问题。\n` +
     `5. 让这些词语尽量融入语境、不显突兀，但不得添加解释性提示。\n` +
-    `6. 只输出叙事正文，不要标题、不要引号、不要解释、不要换行，一段到底。`;
+    `6. 只输出叙事正文，不要标题、不要引号、不要解释、不要换行，一段到底。` +
+    themeLine;
   return { system, user };
 }
 
@@ -66,7 +70,7 @@ function locateWords(text: string, words: StoryWord[]): { segments: Segment[]; u
   return { segments, unembedded };
 }
 
-export async function generateStory(words: StoryWord[], multiplier: number): Promise<GeneratedStory> {
+export async function generateStory(words: StoryWord[], multiplier: number, theme: Theme | null = null): Promise<GeneratedStory> {
   const valid = words.filter((w) => w.word && w.word.length >= 2);
   let text = '';
   let segments: Segment[] = [];
@@ -78,7 +82,7 @@ export async function generateStory(words: StoryWord[], multiplier: number): Pro
     segments = located.segments;
     unembedded = located.unembedded;
   } else {
-    const { system, user } = buildPrompt(valid, multiplier);
+    const { system, user } = buildPrompt(valid, multiplier, theme);
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const resp = await client.chat.completions.create({
@@ -135,4 +139,42 @@ function fallbackLocalStory(words: StoryWord[], multiplier: number): string {
   }
   s += tails[Math.floor(Math.random() * tails.length)];
   return s;
+}
+
+// 断墨 AI 断句：让 DeepSeek 从故事文本中挑出自然的词语/短语作为候选干扰块
+// 返回词语文本数组；后端再用 indexOf 在原文定位，过滤与玩家词重叠/含标点者
+export async function generateDuanmoCandidates(
+  storyText: string,
+  avoidWords: string[],
+  count: number,
+): Promise<string[]> {
+  if (!client) return [];
+  if (!storyText || count <= 0) return [];
+  const user =
+    `请从下面这段中文叙事中，挑出 ${count} 个自然的词语或短语作为候选。\n` +
+    `要求：\n` +
+    `1. 必须是原文中连续出现的字，原样照抄，不得改字、增字、减字、拆字。\n` +
+    `2. 每个候选 2-4 个汉字，不含任何标点。\n` +
+    `3. 必须是语义自然、可独立成词的片段（如成语、名词、动词短语、意象词等），不要是把无关字硬拼起来的乱码。\n` +
+    `4. 不要与这些已选词重叠：${avoidWords.map((w) => `"${w}"`).join('、')}。\n` +
+    `5. 候选之间互相不要重叠。\n` +
+    `6. 只输出一个 JSON 字符串数组，例如 ["夜深人静","月隐云后"]，不要任何解释、不要代码块标记。\n\n` +
+    `叙事原文：\n${storyText}`;
+  try {
+    const resp = await client.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: user }],
+      temperature: 0.7,
+      max_tokens: 512,
+    });
+    const raw = (resp.choices?.[0]?.message?.content || '').trim();
+    // 容错提取首个 JSON 数组
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    const arr = JSON.parse(match[0]) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((x): x is string => typeof x === 'string');
+  } catch {
+    return [];
+  }
 }

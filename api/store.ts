@@ -1,5 +1,5 @@
 // 房间状态存储（内存态，服务端权威）
-import type { Role, Phase, Segment, ChatMessage, Difficulty } from '../shared/types.js';
+import type { Role, Phase, Segment, ChatMessage, Difficulty, Theme } from '../shared/types.js';
 
 export interface Player {
   id: number;
@@ -7,6 +7,7 @@ export interface Player {
   nickname: string;
   role: Role | null;
   secretWord: string;
+  wordStrokes: number;      // 注入词笔画总数（封匣后由量画技能派上用场）
   score: number;
   alive: boolean;
   betOn: number | null;
@@ -38,6 +39,7 @@ export interface RoomState {
   storyLoading: boolean;
   lastEmojiTs: Record<number, number>;
   finished: boolean;
+  theme: Theme | null;      // 本局立意玩家所选主题（仅立意自己可见）
 }
 
 const rooms = new Map<string, RoomState>();
@@ -64,6 +66,7 @@ export function createRoom(
     nickname: host.nickname || `玩家${hostId}`,
     role: null,
     secretWord: '',
+    wordStrokes: 0,
     score: 0,
     alive: true,
     betOn: null,
@@ -94,6 +97,7 @@ export function createRoom(
     storyLoading: false,
     lastEmojiTs: {},
     finished: false,
+    theme: null,
   };
   rooms.set(code, room);
   socketToPlayer.set(socketId, { roomCode: code, playerId: hostId });
@@ -112,6 +116,7 @@ export function joinRoom(code: string, nickname: string, socketId: string): { ok
     nickname: nickname || `玩家${id}`,
     role: null,
     secretWord: '',
+    wordStrokes: 0,
     score: 0,
     alive: true,
     betOn: null,

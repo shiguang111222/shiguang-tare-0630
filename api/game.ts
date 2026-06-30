@@ -1,8 +1,9 @@
 // 游戏状态机：阶段流转、猜词结算、角色技能、断墨候选、超时淘汰、公屏猜词展示
-import type { ChatMessage, Role, Segment } from '../shared/types.js';
-import { DIFFICULTY_INFO } from '../shared/types.js';
+import type { ChatMessage, Role, Segment, Theme } from '../shared/types.js';
+import { DIFFICULTY_INFO, ALL_THEMES } from '../shared/types.js';
 import { type RoomState, type Player, pushChat } from './store.js';
-import { generateStory } from './story.js';
+import { generateStory, generateDuanmoCandidates } from './story.js';
+import cnchar from 'cnchar';
 
 function nick(room: RoomState, id: number): string {
   return room.players.find((p) => p.id === id)?.nickname || `玩家${id}`;
@@ -12,6 +13,20 @@ function isChineseWord(w: string): boolean {
   const chars = Array.from(w);
   if (chars.length < 2 || chars.length > 4) return false;
   return chars.every((c) => /[\u4e00-\u9fff]/.test(c));
+}
+
+// 计算汉字词的笔画总数（用 cnchar；查不到的字按 0 计）
+function strokeCount(word: string): number {
+  let sum = 0;
+  for (const c of Array.from(word)) {
+    try {
+      const n = (cnchar as unknown as { stroke: (ch: string) => number | number[] }).stroke(c);
+      sum += Array.isArray(n) ? (n[0] || 0) : (n || 0);
+    } catch {
+      sum += 0;
+    }
+  }
+  return sum;
 }
 
 const PUNCT = /[，。！？、；：""''「」（）()\[\]【】…—\-\s,.;:!?]/;
@@ -31,6 +46,7 @@ export function startGame(room: RoomState): { ok: boolean; error?: string } {
 function resetRoundWords(room: RoomState): void {
   for (const p of room.players) {
     p.secretWord = '';
+    p.wordStrokes = 0;
     p.wordSubmitted = false;
     p.done = false;
     p.alive = true;
@@ -46,6 +62,7 @@ function resetRoundWords(room: RoomState): void {
   room.eliminationOrder = [];
   room.subRound = 0;
   room.storyLoading = false;
+  room.theme = null;
 }
 
 export function submitWord(room: RoomState, playerId: number, word: string): { ok: boolean; error?: string; messages: ChatMessage[] } {
@@ -57,6 +74,7 @@ export function submitWord(room: RoomState, playerId: number, word: string): { o
   if (!isChineseWord(w)) return { ok: false, error: '词需为 2-4 个汉字', messages: [] };
   const dup = room.players.find((x) => x.id !== playerId && x.secretWord === w);
   p.secretWord = w;
+  p.wordStrokes = strokeCount(w);
   p.wordSubmitted = true;
   p.done = true;
   const messages: ChatMessage[] = [];
@@ -83,9 +101,16 @@ export async function generateAndStartPlay(room: RoomState): Promise<ChatMessage
     .filter((p) => p.alive && p.secretWord)
     .map((p) => ({ playerId: p.id, word: p.secretWord }));
   const multiplier = DIFFICULTY_INFO[room.difficulty].multiplier;
+  // 立意玩家若存活但未选主题，随机择一（保证有主题时 AI 依旨成文）
+  const liyiAlive = room.players.find((p) => p.role === '立意' && p.alive);
+  if (liyiAlive && !room.theme) {
+    room.theme = ALL_THEMES[Math.floor(Math.random() * ALL_THEMES.length)];
+  }
+  // 若立意已出局，theme 保持 null（AI 自由发挥）
+  const theme = liyiAlive ? room.theme : null;
   let story;
   try {
-    story = await generateStory(words, multiplier);
+    story = await generateStory(words, multiplier, theme);
   } catch {
     story = { text: '', segments: [], unembedded: words.map((w) => w.playerId) };
   }
@@ -102,7 +127,7 @@ export async function generateAndStartPlay(room: RoomState): Promise<ChatMessage
     }
   }
   room.pendingGuesses = {};
-  buildDuanmoChoices(room);
+  await buildDuanmoChoices(room);
   messages.push(pushChat(room, { type: 'system', text: `叙事已成（${story.text.length}字），第 1 轮猜词开始。` }));
   if (story.unembedded.length > 0) {
     messages.push(pushChat(room, { type: 'system', text: '有词语未能嵌入叙事，相关玩家本局无法被猜中出局。' }));
@@ -111,7 +136,8 @@ export async function generateAndStartPlay(room: RoomState): Promise<ChatMessage
 }
 
 // 构建断墨候选词块：3+人数 个候选，恰含 1 个真实玩家词
-export function buildDuanmoChoices(room: RoomState): void {
+// 干扰块优先由 AI（DeepSeek）从故事中自然断句得到，不足再用随机切片兜底
+export async function buildDuanmoChoices(room: RoomState): Promise<void> {
   room.duanmoChoices = [];
   room.duanmoTarget = null;
   const duanmo = room.players.find((p) => p.role === '断墨' && p.alive);
@@ -129,6 +155,29 @@ export function buildDuanmoChoices(room: RoomState): void {
   // 干扰块数量：2 + 总人数（与真实词合计 3 + 总人数）
   const decoyCount = 2 + room.players.length;
   const decoys: Segment[] = [];
+
+  // AI 自然断句：把玩家词文本作为避让词传入，避免生成与玩家词重叠的候选
+  const avoidWords = room.segments.map((s) => room.storyText.slice(s.start, s.end));
+  const aiWords = await generateDuanmoCandidates(room.storyText, avoidWords, decoyCount);
+  for (const w of aiWords) {
+    if (decoys.length >= decoyCount) break;
+    const chars = Array.from(w);
+    if (chars.length < 2 || chars.length > 4) continue;
+    const idx = room.storyText.indexOf(w);
+    if (idx === -1) continue;
+    const start = idx;
+    const end = idx + w.length;
+    if (room.segments.some((s) => !(end <= s.start || start >= s.end))) continue;
+    if (decoys.some((d) => !(end <= d.start || start >= d.end))) continue;
+    let hasPunct = false;
+    for (let i = start; i < end; i++) {
+      if (PUNCT.test(room.storyText[i])) { hasPunct = true; break; }
+    }
+    if (hasPunct) continue;
+    decoys.push({ start, end });
+  }
+
+  // AI 不够或失败，随机切片兜底
   let attempts = 0;
   while (decoys.length < decoyCount && attempts < 400) {
     attempts++;
@@ -202,7 +251,7 @@ export function allGuessesSubmitted(room: RoomState): boolean {
 }
 
 // 结算当前子轮，并在公屏展示每人所猜之词
-export function resolveSubround(room: RoomState): ChatMessage[] {
+export async function resolveSubround(room: RoomState): Promise<ChatMessage[]> {
   const messages: ChatMessage[] = [];
   messages.push(pushChat(room, { type: 'system', text: '全部已落定，揭晓所猜：' }));
 
@@ -284,7 +333,7 @@ export function resolveSubround(room: RoomState): ChatMessage[] {
       p.betOn = null;
     }
     room.pendingGuesses = {};
-    buildDuanmoChoices(room);
+    await buildDuanmoChoices(room);
     messages.push(pushChat(room, { type: 'system', text: `全部完成，进入下一轮（第 ${room.subRound} 轮猜词）。` }));
   }
   return messages;
@@ -394,6 +443,18 @@ export function setRole(room: RoomState, playerId: number, role: Role): { ok: bo
   const p = room.players.find((x) => x.id === playerId);
   if (!p) return { ok: false, error: '玩家不存在' };
   p.role = role;
+  return { ok: true };
+}
+
+// 立意玩家在封匣阶段选定本局主题（仅立意自己可调，主题仅己知晓）
+export function setTheme(room: RoomState, playerId: number, theme: Theme): { ok: boolean; error?: string } {
+  if (room.phase !== 'words') return { ok: false, error: '当前不可择题' };
+  const p = room.players.find((x) => x.id === playerId);
+  if (!p) return { ok: false, error: '玩家不存在' };
+  if (p.role !== '立意') return { ok: false, error: '仅立意可择题' };
+  if (!p.alive) return { ok: false, error: '你已出局' };
+  if (!ALL_THEMES.includes(theme)) return { ok: false, error: '主题无效' };
+  room.theme = theme;
   return { ok: true };
 }
 

@@ -1,8 +1,8 @@
 // 《词匣》前后端共享类型定义
 
-export type Role = '断墨' | '省笔' | '窥简' | '押司';
+export type Role = '断墨' | '省笔' | '窥简' | '押司' | '量画' | '立意';
 
-export const ALL_ROLES: Role[] = ['断墨', '省笔', '窥简', '押司'];
+export const ALL_ROLES: Role[] = ['断墨', '省笔', '窥简', '押司', '量画', '立意'];
 
 export interface RoleInfo {
   role: Role;
@@ -16,7 +16,14 @@ export const ROLE_INFO: Record<Role, RoleInfo> = {
   省笔: { role: '省笔', name: '省去闲笔，渐露真意', skill: '每子轮可随机拭去一字（不暴露玩家词位置）', ui: '点「拭去一字」按钮，随机抹去闲字' },
   窥简: { role: '窥简', name: '窥简量长，先知其度', skill: '开局即知每位玩家所持词字数', ui: '顶部常驻词长面板' },
   押司: { role: '押司', name: '押司坐庄，下注生死', skill: '出局后可押注存活玩家，存活+1/淘汰-1（可负分）', ui: '点选存活玩家下注' },
+  量画: { role: '量画', name: '量画知数，毫芒可计', skill: '每局可知各玩家注入词之笔画总数', ui: '猜词界面常驻笔画面板' },
+  立意: { role: '立意', name: '立意定题，叙事循旨', skill: '每局秘密择一主题，叙事依此成文（仅己知晓）', ui: '封匣阶段从十大主题中择一' },
 };
+
+// 立意可选的叙事主题（范围宽广，不限制 AI 发挥）
+export type Theme = '科幻' | '玄幻' | '历史' | '军事' | '动漫' | '武侠' | '都市' | '末日' | '探险' | '校园';
+
+export const ALL_THEMES: Theme[] = ['科幻', '玄幻', '历史', '军事', '动漫', '武侠', '都市', '末日', '探险', '校园'];
 
 export type Difficulty = '新手' | '简单' | '困难' | '噩梦';
 
@@ -70,6 +77,8 @@ export interface PlayerView {
   duanmoChoices: Segment[];   // 仅断墨有值：候选词块（无 ownerId 泄露）
   pruned: number[];           // 已拭去的字符索引
   segmentHints: { ownerId: number; length: number }[]; // 窥简：各玩家词长（仅窥简有值）
+  strokeHints: { ownerId: number; strokes: number }[]; // 量画：各玩家词笔画总数（仅量画有值）
+  myTheme?: Theme | null;  // 立意：本局所选主题（仅立意自己有值）
   completion: { done: number; total: number };
   eliminationOrder: number[];
   revealedWords?: { ownerId: number; word: string; nickname: string }[]; // result 阶段
@@ -102,6 +111,7 @@ export interface ClientEvents {
   'lobby:profile': (payload: { nickname: string; role: Role }) => void;
   'lobby:start': () => void;
   'words:submit': (payload: { word: string }) => void;
+  'words:theme': (payload: { theme: Theme }) => void;
   'guess:submit': (payload: { start: number; end: number }) => void;
   'guess:submitChoice': (payload: { choiceIndex: number }) => void;
   'skill:prune': () => void;

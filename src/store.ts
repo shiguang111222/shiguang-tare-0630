@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { socket } from "./lib/socket";
-import type { PlayerView, Role, Difficulty } from "../shared/types";
+import type { PlayerView, Role, Difficulty, Theme } from "../shared/types";
 
 const SESSION_KEY = "cihxia.session";
 
@@ -51,6 +51,7 @@ interface GameStore {
   setProfile: (p: { nickname: string; role: Role }) => void;
   start: () => void;
   submitWord: (word: string) => void;
+  setTheme: (theme: Theme) => void;
   submitGuess: (start: number, end: number) => void;
   submitChoice: (choiceIndex: number) => void;
   prune: () => void;
@@ -139,6 +140,7 @@ export const useGame = create<GameStore>((set, get) => ({
   setProfile: (p) => socket.emit("lobby:profile", p),
   start: () => socket.emit("lobby:start"),
   submitWord: (word) => socket.emit("words:submit", { word }),
+  setTheme: (theme) => socket.emit("words:theme", { theme }),
   submitGuess: (start, end) => socket.emit("guess:submit", { start, end }),
   submitChoice: (choiceIndex) => socket.emit("guess:submitChoice", { choiceIndex }),
   prune: () => socket.emit("skill:prune"),

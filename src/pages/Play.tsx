@@ -116,6 +116,22 @@ export default function Play() {
         </div>
       )}
 
+      {/* 量画笔画面板：各玩家注入词笔画总数 */}
+      {view.myRole === "量画" && view.strokeHints.length > 0 && (
+        <div className="shrink-0 mx-5 mb-2 px-3 py-2 rounded-sm border border-jade/40 bg-jade/10">
+          <span className="font-sub text-jade text-[11px]">量画 · 众人词笔画：</span>
+          {view.strokeHints.map((h) => {
+            const nick = view.players.find((p) => p.id === h.ownerId)?.nickname ?? "?";
+            const isMe = h.ownerId === view.myId;
+            return (
+              <span key={h.ownerId} className="text-paper/70 text-[11px] font-sub ml-1.5">
+                {nick}{isMe ? "(己)" : ""}{h.strokes}画
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {/* 角色提示 */}
       {view.myRole && (
         <div className="shrink-0 mx-5 mb-2 text-[11px] text-paper/40 font-sub px-1">

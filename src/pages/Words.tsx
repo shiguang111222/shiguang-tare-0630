@@ -1,15 +1,19 @@
 import { useState } from "react";
 import { useGame } from "../store";
-import { ROLE_INFO } from "../../shared/types";
+import { ROLE_INFO, ALL_THEMES, type Theme } from "../../shared/types";
+import { cn } from "@/lib/utils";
 
 export default function Words() {
   const view = useGame((s) => s.view)!;
   const submitWord = useGame((s) => s.submitWord);
+  const setTheme = useGame((s) => s.setTheme);
   const [word, setWord] = useState("");
 
   const me = view.players.find((p) => p.id === view.myId)!;
   const submitted = me.wordSubmitted;
   const valid = Array.from(word).length >= 2 && Array.from(word).length <= 4 && /^[\u4e00-\u9fff]+$/.test(word);
+  const isLiyi = view.myRole === "立意";
+  const themePicked = view.myTheme ?? null;
 
   const onChange = (v: string) => {
     const filtered = Array.from(v).filter((c) => /[\u4e00-\u9fff]/.test(c)).slice(0, 4).join("");
@@ -19,6 +23,10 @@ export default function Words() {
   const submit = () => {
     if (!valid) return;
     submitWord(word);
+  };
+
+  const pickTheme = (t: Theme) => {
+    setTheme(t);
   };
 
   const roleInfo = view.myRole ? ROLE_INFO[view.myRole] : null;
@@ -40,6 +48,38 @@ export default function Words() {
             <span className="text-[10px] text-paper/40 font-sub">{roleInfo.name}</span>
           </div>
           <p className="text-[11px] text-paper/55 mt-1 leading-relaxed">{roleInfo.skill}</p>
+        </div>
+      )}
+
+      {/* 立意 · 择题面板 */}
+      {isLiyi && (
+        <div className="mt-4 px-3 py-3 rounded-sm border border-cinnabar/40 bg-cinnabar/10">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-brush text-lg text-cinnabar-light">立意 · 择一主题</span>
+            <span className="text-[10px] text-paper/50 font-sub">仅你知晓</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {ALL_THEMES.map((t) => {
+              const sel = themePicked === t;
+              return (
+                <button
+                  key={t}
+                  onClick={() => pickTheme(t)}
+                  className={cn(
+                    "py-1.5 rounded-sm border font-sub text-sm transition-colors",
+                    sel
+                      ? "border-cinnabar bg-cinnabar text-paper"
+                      : "border-gold-soft/30 bg-ink-soft/50 text-paper active:bg-gold-soft/15",
+                  )}
+                >
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-paper/45 font-sub mt-2 leading-relaxed">
+            {themePicked ? `已择「${themePicked}」为主题，叙事将循此成文。` : "未择则全员封匣后随机定之。"}
+          </p>
         </div>
       )}
 

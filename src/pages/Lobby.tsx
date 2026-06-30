@@ -25,19 +25,53 @@ export default function Lobby() {
     }
   };
 
-  const copyCode = () => {
-    navigator.clipboard?.writeText(view.roomCode).then(() => {
-      setCopied("code");
-      setTimeout(() => setCopied(null), 1500);
+  // 复制到剪贴板：优先用 Clipboard API（需 HTTPS/localhost），降级 execCommand（兼容 HTTP 公网 IP）
+  const copyText = (text: string): Promise<void> => {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise((resolve, reject) => {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      ta.style.top = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        document.execCommand("copy");
+        resolve();
+      } catch (e) {
+        reject(e);
+      } finally {
+        document.body.removeChild(ta);
+      }
     });
   };
 
+  const copyCode = () => {
+    copyText(view.roomCode)
+      .then(() => {
+        setCopied("code");
+        setTimeout(() => setCopied(null), 1500);
+      })
+      .catch(() => {
+        setCopied(null);
+      });
+  };
+
   const copyLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}?room=${view.roomCode}`;
-    navigator.clipboard?.writeText(url).then(() => {
-      setCopied("link");
-      setTimeout(() => setCopied(null), 1500);
-    });
+    // 固定指向根路径，确保新玩家点开进入 Home 页面（读取 ?room= 自动填入房号）
+    const url = `${window.location.origin}/?room=${view.roomCode}`;
+    copyText(url)
+      .then(() => {
+        setCopied("link");
+        setTimeout(() => setCopied(null), 1500);
+      })
+      .catch(() => {
+        setCopied(null);
+      });
   };
 
   const allReady = view.players.length >= 2 && view.players.every((p) => p.role);

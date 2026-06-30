@@ -38,6 +38,18 @@ export function serializeForPlayer(room: RoomState, playerId: number): PlayerVie
         .map((p) => ({ ownerId: p.id, length: p.secretWord.length }))
     : [];
 
+  // 量画：各玩家注入词笔画总数（封匣后可知；自己词当然也算）
+  const isLianghua = me?.role === '量画';
+  const strokeHints = isLianghua
+    ? room.players
+        .filter((p) => p.wordSubmitted && p.secretWord)
+        .map((p) => ({ ownerId: p.id, strokes: p.wordStrokes }))
+    : [];
+
+  // 立意：仅立意自己知晓本局所选主题
+  const isLiyi = me?.role === '立意';
+  const myTheme = isLiyi ? room.theme : undefined;
+
   let done = 0;
   let total = 0;
   if (room.phase === 'words') {
@@ -83,6 +95,8 @@ export function serializeForPlayer(room: RoomState, playerId: number): PlayerVie
     duanmoChoices,
     pruned: room.pruned,
     segmentHints,
+    strokeHints,
+    myTheme,
     completion: { done, total },
     eliminationOrder: room.eliminationOrder,
     revealedWords,

@@ -31,6 +31,7 @@ import {
   emojiCooldownOk,
   setRole,
   setNickname,
+  setTheme,
   timeoutPending,
   exitPlayer,
 } from './game.js';
@@ -75,7 +76,7 @@ function emitTick(room: RoomState, seconds: number): void {
 }
 
 // 阶段到期：淘汰未行动者，按需推进
-function onPhaseExpire(room: RoomState): void {
+async function onPhaseExpire(room: RoomState): Promise<void> {
   if (room.phase !== 'words' && room.phase !== 'play') {
     clearTimer(room.code);
     return;
@@ -93,7 +94,7 @@ function onPhaseExpire(room: RoomState): void {
       })
       .catch(() => broadcastRoomState(room));
   } else if (room.phase === 'play') {
-    resolveSubround(room);
+    await resolveSubround(room);
     broadcastRoomState(room);
     if (room.phase === 'play') startPhaseTimer(room);
     else clearTimer(room.code);
@@ -110,7 +111,7 @@ function startPhaseTimer(room: RoomState): void {
     left -= 1;
     if (left <= 0) {
       clearTimer(room.code);
-      onPhaseExpire(room);
+      onPhaseExpire(room).catch(() => {});
     } else {
       emitTick(room, left);
     }
@@ -161,7 +162,7 @@ io.on('connection', (socket) => {
   });
 
   // 主动离匣
-  socket.on('room:leave', () => {
+  socket.on('room:leave', async () => {
     const ctx = getPlayerBySocket(socket.id);
     if (!ctx) return;
     const { room, player } = ctx;
@@ -189,7 +190,7 @@ io.on('connection', (socket) => {
           })
           .catch(() => broadcastRoomState(room));
       } else if (room.phase === 'play' && allGuessesSubmitted(room)) {
-        resolveSubround(room);
+        await resolveSubround(room);
         if (room.phase === 'play') startPhaseTimer(room);
         else clearTimer(room.code);
       }
@@ -234,29 +235,38 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 立意玩家选定本局主题（仅立意可调，主题仅己知晓）
+  socket.on('words:theme', (payload) => {
+    const ctx = getPlayerBySocket(socket.id);
+    if (!ctx) return;
+    const r = setTheme(ctx.room, ctx.player.id, payload.theme);
+    if (!r.ok) return emitError(socket, r.error || '择题失败');
+    broadcastRoomState(ctx.room);
+  });
+
   // ---------- 猜词 ----------
-  socket.on('guess:submit', (payload) => {
+  socket.on('guess:submit', async (payload) => {
     const ctx = getPlayerBySocket(socket.id);
     if (!ctx) return;
     const r = submitGuess(ctx.room, ctx.player.id, payload);
     if (!r.ok) return emitError(socket, r.error || '提交失败');
     broadcastRoomState(ctx.room);
     if (allGuessesSubmitted(ctx.room)) {
-      resolveSubround(ctx.room);
+      await resolveSubround(ctx.room);
       broadcastRoomState(ctx.room);
       if (ctx.room.phase === 'play') startPhaseTimer(ctx.room);
       else clearTimer(ctx.room.code);
     }
   });
 
-  socket.on('guess:submitChoice', (payload) => {
+  socket.on('guess:submitChoice', async (payload) => {
     const ctx = getPlayerBySocket(socket.id);
     if (!ctx) return;
     const r = submitGuess(ctx.room, ctx.player.id, payload);
     if (!r.ok) return emitError(socket, r.error || '提交失败');
     broadcastRoomState(ctx.room);
     if (allGuessesSubmitted(ctx.room)) {
-      resolveSubround(ctx.room);
+      await resolveSubround(ctx.room);
       broadcastRoomState(ctx.room);
       if (ctx.room.phase === 'play') startPhaseTimer(ctx.room);
       else clearTimer(ctx.room.code);
@@ -307,7 +317,7 @@ io.on('connection', (socket) => {
   });
 
   // ---------- 断线 ----------
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     const ctx = getPlayerBySocket(socket.id);
     removeSocket(socket.id);
     if (!ctx) {
@@ -337,7 +347,7 @@ io.on('connection', (socket) => {
           })
           .catch(() => broadcastRoomState(room));
       } else if (room.phase === 'play' && allGuessesSubmitted(room)) {
-        resolveSubround(room);
+        await resolveSubround(room);
         if (room.phase === 'play') startPhaseTimer(room);
         else clearTimer(room.code);
       }
