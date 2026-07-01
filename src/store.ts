@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { socket } from "./lib/socket";
-import type { PlayerView, Role, Difficulty, Theme } from "../shared/types";
+import type { PlayerView, Role, Difficulty, Theme, DualForm } from "../shared/types";
+import { getVoiceChar, setVoiceChar as persistVoiceChar, type VoiceChar } from "./lib/sound";
 
 const SESSION_KEY = "cihxia.session";
 
@@ -38,6 +39,8 @@ interface GameStore {
   setTab: (tab: Tab) => void;
   clearError: () => void;
   leaveRoom: () => void;
+  voiceChar: VoiceChar;
+  setVoiceChar: (v: VoiceChar) => void;
 
   createRoom: (
     p: { nickname: string; totalRounds: number; disabledRoles: Role[]; difficulty: Difficulty; waitTime: number },
@@ -49,13 +52,16 @@ interface GameStore {
   ) => void;
 
   setProfile: (p: { nickname: string; role: Role }) => void;
+  setDualForm: (form: DualForm) => void;
   start: () => void;
-  submitWord: (word: string) => void;
+  submitWord: (word: string, word2?: string) => void;
   setTheme: (theme: Theme) => void;
   submitGuess: (start: number, end: number) => void;
   submitChoice: (choiceIndex: number) => void;
   prune: () => void;
   bet: (targetPlayerId: number) => void;
+  scapegoat: (targetPlayerId: number) => void;
+  suicide: () => void;
   sendEmoji: (emoji: string) => void;
   nextRound: () => void;
 }
@@ -67,6 +73,12 @@ export const useGame = create<GameStore>((set, get) => ({
   error: null,
   rejoinTried: false,
   secondsLeft: 0,
+  voiceChar: getVoiceChar(),
+
+  setVoiceChar: (v) => {
+    persistVoiceChar(v);
+    set({ voiceChar: v });
+  },
 
   init: () => {
     if (socket.connected) return;
@@ -88,7 +100,16 @@ export const useGame = create<GameStore>((set, get) => ({
 
     socket.on("disconnect", () => set({ connected: false, rejoinTried: false, secondsLeft: 0 }));
 
-    socket.on("room:state", (view) => set({ view, error: null }));
+    socket.on("room:state", (view) => {
+      const prev = get().view;
+      set({ view, error: null });
+      // 进入复盘公屏 → 自动切到公屏；复盘结束回到猜词 → 自动切回游戏
+      if (prev && prev.phase !== "reveal" && view.phase === "reveal") {
+        set({ tab: "chat" });
+      } else if (prev && prev.phase === "reveal" && view.phase === "play") {
+        set({ tab: "game" });
+      }
+    });
 
     socket.on("room:tick", (payload) => set({ secondsLeft: payload.seconds }));
 
@@ -138,13 +159,16 @@ export const useGame = create<GameStore>((set, get) => ({
   },
 
   setProfile: (p) => socket.emit("lobby:profile", p),
+  setDualForm: (form) => socket.emit("lobby:dualForm", { form }),
   start: () => socket.emit("lobby:start"),
-  submitWord: (word) => socket.emit("words:submit", { word }),
+  submitWord: (word, word2) => socket.emit("words:submit", word2 ? { word, word2 } : { word }),
   setTheme: (theme) => socket.emit("words:theme", { theme }),
   submitGuess: (start, end) => socket.emit("guess:submit", { start, end }),
   submitChoice: (choiceIndex) => socket.emit("guess:submitChoice", { choiceIndex }),
   prune: () => socket.emit("skill:prune"),
   bet: (targetPlayerId) => socket.emit("skill:bet", { targetPlayerId }),
+  scapegoat: (targetPlayerId) => socket.emit("skill:scapegoat", { targetPlayerId }),
+  suicide: () => socket.emit("skill:suicide"),
   sendEmoji: (emoji) => socket.emit("chat:emoji", { emoji }),
   nextRound: () => socket.emit("round:next"),
 }));

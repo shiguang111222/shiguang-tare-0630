@@ -1,4 +1,6 @@
+import { useEffect, useRef } from "react";
 import { useGame } from "../store";
+import { playVoice } from "@/lib/sound";
 
 export default function Result() {
   const view = useGame((s) => s.view)!;
@@ -10,6 +12,20 @@ export default function Result() {
     ? view.finalRanking!
     : [...view.players].sort((a, b) => b.score - a.score);
   const eliminatedSet = new Set(view.eliminationOrder);
+
+  // 赢家判定：终局看总榜第一；单局结算看是否存活（最后存活者为本局赢家）
+  const me = view.players.find((p) => p.id === view.myId);
+  const iWin = isFinal
+    ? view.finalRanking![0]?.playerId === view.myId
+    : !!me?.alive;
+
+  // 进入结算时，赢家播胜利语音（防 StrictMode 双调用）
+  const playedRef = useRef(false);
+  useEffect(() => {
+    if (playedRef.current) return;
+    playedRef.current = true;
+    if (iWin) playVoice("05_victory");
+  }, [iWin]);
 
   return (
     <div className="px-5 py-6 min-h-full flex flex-col">

@@ -1,10 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useGame } from "../store";
+import { cn } from "@/lib/utils";
 
 const EMOJIS = ["🤔", "😏", "😆", "😱", "🥸", "🎭", "✍️", "🍵"];
 
 export default function Chat() {
   const view = useGame((s) => s.view)!;
+  const secondsLeft = useGame((s) => s.secondsLeft);
   const sendEmoji = useGame((s) => s.sendEmoji);
   const me = view.myId;
   const listRef = useRef<HTMLDivElement>(null);
@@ -14,6 +16,8 @@ export default function Chat() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [view.chat.length]);
 
+  const isReveal = view.phase === "reveal";
+
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <div className="px-4 pt-3 pb-2 flex items-center gap-2">
@@ -21,6 +25,23 @@ export default function Chat() {
         <span className="text-paper/40 text-xs font-sub">系统消息与表情</span>
       </div>
       <div className="ink-rule mx-4" />
+
+      {/* 复盘公屏倒计时条幅 */}
+      {isReveal && secondsLeft > 0 && (
+        <div
+          className={cn(
+            "mx-4 mt-2 px-3 py-2 rounded-sm border text-center",
+            secondsLeft <= 3
+              ? "border-cinnabar bg-cinnabar/15 animate-shimmer"
+              : "border-gold-soft/40 bg-gold-soft/10",
+          )}
+        >
+          <span className="font-brush text-lg text-gold">复 盘 中</span>
+          <span className="text-paper/55 text-xs font-sub ml-2">
+            · {secondsLeft}s 后进入第 {view.subRound + 1} 轮猜词
+          </span>
+        </div>
+      )}
 
       <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 py-3 space-y-2.5">
         {view.chat.length === 0 && (

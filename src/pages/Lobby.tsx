@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import { useGame } from "../store";
-import { ALL_ROLES, ROLE_INFO } from "../../shared/types";
+import { ALL_ROLES, ROLE_INFO, type DualForm } from "../../shared/types";
+import { VOICE_CHARS, previewVoice } from "@/lib/sound";
 
 export default function Lobby() {
   const view = useGame((s) => s.view)!;
   const setProfile = useGame((s) => s.setProfile);
+  const setDualForm = useGame((s) => s.setDualForm);
   const start = useGame((s) => s.start);
+  const voiceChar = useGame((s) => s.voiceChar);
+  const setVoiceChar = useGame((s) => s.setVoiceChar);
 
   const me = view.players.find((p) => p.id === view.myId)!;
   const [nick, setNick] = useState(me.nickname);
@@ -155,6 +159,41 @@ export default function Lobby() {
         />
       </div>
 
+      {/* 音色选择 */}
+      <div>
+        <div className="flex items-baseline justify-between mb-1.5 px-1">
+          <label className="text-paper/50 text-xs font-sub">择一音色</label>
+          <span className="text-paper/35 text-[10px] font-sub">点击试听</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {VOICE_CHARS.map((v) => {
+            const selected = voiceChar === v.id;
+            return (
+              <button
+                key={v.id}
+                onClick={() => {
+                  setVoiceChar(v.id);
+                  previewVoice(v.id);
+                }}
+                className={`text-left px-3 py-2.5 rounded-sm border transition-colors ${
+                  selected
+                    ? "border-cinnabar bg-cinnabar/15"
+                    : "border-gold-soft/30 bg-ink-soft/50 active:bg-gold-soft/10"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-brush text-xl text-gold">{v.name}</span>
+                  {selected && (
+                    <span className="text-[10px] text-cinnabar-light font-sub">已选</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-paper/45 mt-0.5 leading-relaxed">{v.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* 角色选择 */}
       <div>
         <label className="block text-paper/50 text-xs font-sub mb-1.5 px-1">择一司职</label>
@@ -162,27 +201,70 @@ export default function Lobby() {
           {ALL_ROLES.map((r) => {
             const disabled = view.disabledRoles.includes(r);
             const selected = me.role === r;
+            const isShuangsheng = r === "双生";
+            // 双生双击切换形态：仅已选双生时可切；single→double / double→single
+            const toggleForm = () => {
+              if (!selected) return;
+              const next: DualForm = view.myDualForm === "double" ? "single" : "double";
+              setDualForm(next);
+            };
             return (
-              <button
+              <div
                 key={r}
-                disabled={disabled}
-                onClick={() => sendProfile(r)}
-                className={`text-left px-3 py-2.5 rounded-sm border transition-colors ${
-                  selected
-                    ? "border-cinnabar bg-cinnabar/15"
-                    : disabled
-                      ? "border-ink-mist/40 bg-ink-soft/30 opacity-40"
-                      : "border-gold-soft/30 bg-ink-soft/50 active:bg-gold-soft/10"
+                onDoubleClick={isShuangsheng && selected ? toggleForm : undefined}
+                className={`relative ${
+                  isShuangsheng && selected ? "cursor-pointer" : ""
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="font-brush text-xl text-gold">{r}</span>
-                  <span className="text-[10px] text-paper/40 font-sub">{ROLE_INFO[r].name}</span>
-                </div>
-                <p className="text-[11px] text-paper/55 mt-1 leading-relaxed">
-                  {ROLE_INFO[r].skill}
-                </p>
-              </button>
+                <button
+                  disabled={disabled}
+                  onClick={() => sendProfile(r)}
+                  className={`w-full text-left px-3 py-2.5 rounded-sm border transition-colors ${
+                    selected
+                      ? "border-cinnabar bg-cinnabar/15"
+                      : disabled
+                        ? "border-ink-mist/40 bg-ink-soft/30 opacity-40"
+                        : "border-gold-soft/30 bg-ink-soft/50 active:bg-gold-soft/10"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-brush text-xl text-gold">{r}</span>
+                    <span className="text-[10px] text-paper/40 font-sub">{ROLE_INFO[r].name}</span>
+                  </div>
+                  <p className="text-[11px] text-paper/55 mt-1 leading-relaxed">
+                    {ROLE_INFO[r].skill}
+                  </p>
+                  {/* 双生形态指示 */}
+                  {isShuangsheng && selected && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span
+                        className={`text-[10px] font-sub px-2 py-0.5 rounded-sm border ${
+                          view.myDualForm !== "double"
+                            ? "border-cinnabar bg-cinnabar/20 text-cinnabar-light"
+                            : "border-gold-soft/30 text-paper/40"
+                        }`}
+                      >
+                        单形态 · 一命双猜
+                      </span>
+                      <span
+                        className={`text-[10px] font-sub px-2 py-0.5 rounded-sm border ${
+                          view.myDualForm === "double"
+                            ? "border-cinnabar bg-cinnabar/20 text-cinnabar-light"
+                            : "border-gold-soft/30 text-paper/40"
+                        }`}
+                      >
+                        双形态 · 两词两命
+                      </span>
+                    </div>
+                  )}
+                </button>
+                {/* 双生提示：双击切换形态 */}
+                {isShuangsheng && selected && (
+                  <span className="absolute top-2 right-2 text-[9px] text-gold/50 font-sub">
+                    双击切形态
+                  </span>
+                )}
+              </div>
             );
           })}
         </div>

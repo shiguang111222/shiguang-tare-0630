@@ -54,11 +54,22 @@ export default {
           "0%,100%": { opacity: "0.5" },
           "50%": { opacity: "1" },
         },
+        eliminate: {
+          "0%": { opacity: "0", transform: "scale(0.6)" },
+          "30%": { opacity: "0.9", transform: "scale(1.1)" },
+          "100%": { opacity: "0", transform: "scale(1.4)" },
+        },
+        tickpulse: {
+          "0%,100%": { transform: "scale(1)" },
+          "50%": { transform: "scale(1.18)" },
+        },
       },
       animation: {
         inkfade: "inkfade 0.5s ease-out both",
         sealstamp: "sealstamp 0.45s cubic-bezier(.2,.8,.2,1) both",
         shimmer: "shimmer 1.6s ease-in-out infinite",
+        eliminate: "eliminate 1.2s ease-out forwards",
+        tickpulse: "tickpulse 0.4s ease-out",
       },
     },
   },

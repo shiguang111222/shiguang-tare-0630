@@ -2,18 +2,29 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "../store";
 import { ROLE_INFO } from "../../shared/types";
 import { cn } from "@/lib/utils";
+import { playSound, playVoice } from "@/lib/sound";
 
 const MAX_LEN = 4;
 const LONG_PRESS_MS = 450;
 
 export default function Play() {
   const view = useGame((s) => s.view)!;
+  const secondsLeft = useGame((s) => s.secondsLeft);
   const submitGuess = useGame((s) => s.submitGuess);
   const submitChoice = useGame((s) => s.submitChoice);
   const prune = useGame((s) => s.prune);
+  const scapegoat = useGame((s) => s.scapegoat);
+  const suicide = useGame((s) => s.suicide);
 
   const me = view.players.find((p) => p.id === view.myId)!;
   const isDuanmo = view.myRole === "断墨";
+  // 双生：双形态满命（2命）前不可猜；单形态每子轮可猜两词
+  const isShuangsheng = view.myRole === "双生";
+  const shuangLocked = isShuangsheng && view.myDualForm === "double" && view.myLives >= 2;
+  const guessesLeft = view.myGuessesPerRound - view.myGuessesUsed;
+  // 借命：第3子轮起可指定替死鬼（技能未发动时）
+  const isJieming = view.myRole === "借命";
+  const canPickScapegoat = isJieming && view.subRound >= 3 && !view.scapegoatUsed && me.alive;
   // 微信式选区：长按起手，两端手柄拖拽调长度。selStart/selEnd 闭区间字符索引。
   const [selStart, setSelStart] = useState<number | null>(null);
   const [selEnd, setSelEnd] = useState<number | null>(null);
@@ -31,6 +42,51 @@ export default function Play() {
     setSelEnd(null);
     setSelChoice(null);
   }, [view.subRound, view.myDone]);
+
+  // 结算反馈音效 + 出局动画：play→reveal（继续）/ play→result（终局）即为本轮揭晓时刻
+  const [showEliminate, setShowEliminate] = useState(false);
+  const prevElimLen = useRef(view.eliminationOrder.length);
+  const prevPhase = useRef(view.phase);
+  const prevAlive = useRef(me.alive);
+  useEffect(() => {
+    const resolved =
+      prevPhase.current === "play" && (view.phase === "reveal" || view.phase === "result");
+    const elimGrew = view.eliminationOrder.length > prevElimLen.current;
+    const iDied = !me.alive && prevAlive.current;
+
+    if (resolved) {
+      // 出局→落败语音；有人出局且非我→猜对语音；无人出局→猜错语音
+      if (iDied) playVoice("06_lose");
+      else if (elimGrew) playVoice("01_correct");
+      else playVoice("02_wrong");
+    }
+    let t: number | undefined;
+    if (iDied) {
+      setShowEliminate(true);
+      t = window.setTimeout(() => setShowEliminate(false), 1300);
+    }
+
+    prevElimLen.current = view.eliminationOrder.length;
+    prevPhase.current = view.phase;
+    prevAlive.current = me.alive;
+
+    return () => {
+      if (t !== undefined) window.clearTimeout(t);
+    };
+  }, [view.phase, view.eliminationOrder.length, me.alive]);
+
+  // 猜词倒计时催促：play 阶段最后 5 秒，每子轮播一次
+  const guessUrgeKey = useRef("");
+  useEffect(() => {
+    if (view.phase !== "play") return;
+    if (me.alive && !me.done && secondsLeft > 0 && secondsLeft <= 5) {
+      const key = `${view.subRound}`;
+      if (guessUrgeKey.current !== key) {
+        guessUrgeKey.current = key;
+        playVoice("04_guess_urge");
+      }
+    }
+  }, [secondsLeft, view.phase, view.subRound, me.alive, me.done]);
 
   const ownRanges = useMemo(
     () => view.segments.filter((s) => s.ownerId === view.myId),
@@ -147,18 +203,28 @@ export default function Play() {
 
   const doGuess = () => {
     if (!hasSel || selLen < 2) return;
+    playSound("submit");
     submitGuess(selStart!, selEnd! + 1);
     clearSel();
   };
 
   const doChoiceGuess = () => {
     if (selChoice === null) return;
+    playSound("submit");
     submitChoice(selChoice);
     setSelChoice(null);
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col relative">
+      {/* 出局动画：朱砂"出局"印章一闪而过 */}
+      {showEliminate && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center">
+          <div className="font-brush text-7xl text-cinnabar seal-stamp px-10 py-5 animate-eliminate">
+            出 局
+          </div>
+        </div>
+      )}
       {/* 头部信息 */}
       <div className="shrink-0 px-5 pt-4 pb-2">
         <div className="flex items-baseline justify-between">
@@ -182,10 +248,10 @@ export default function Play() {
         </div>
       </div>
 
-      {/* 窥简词长面板 */}
-      {view.myRole === "窥简" && view.segmentHints.length > 0 && (
+      {/* 识人 · 渐进词长面板：每局揭示一名未晓玩家词长 */}
+      {view.myRole === "识人" && view.segmentHints.length > 0 && (
         <div className="shrink-0 mx-5 mb-2 px-3 py-2 rounded-sm border border-jade/40 bg-jade/10">
-          <span className="font-sub text-jade text-[11px]">窥简 · 他人词长：</span>
+          <span className="font-sub text-jade text-[11px]">识人 · 已晓词长：</span>
           {view.segmentHints.map((h) => {
             const nick = view.players.find((p) => p.id === h.ownerId)?.nickname ?? "?";
             return (
@@ -197,19 +263,91 @@ export default function Play() {
         </div>
       )}
 
-      {/* 量画笔画面板：各玩家注入词笔画总数 */}
+      {/* 量画笔画面板：笔画总数（第3子轮加首字、第5子轮加尾字） */}
       {view.myRole === "量画" && view.strokeHints.length > 0 && (
         <div className="shrink-0 mx-5 mb-2 px-3 py-2 rounded-sm border border-jade/40 bg-jade/10">
           <span className="font-sub text-jade text-[11px]">量画 · 众人词笔画：</span>
           {view.strokeHints.map((h) => {
             const nick = view.players.find((p) => p.id === h.ownerId)?.nickname ?? "?";
             const isMe = h.ownerId === view.myId;
+            const headStr = h.head !== undefined ? ` 首${h.head}` : "";
+            const tailStr = h.tail !== undefined ? ` 尾${h.tail}` : "";
             return (
               <span key={h.ownerId} className="text-paper/70 text-[11px] font-sub ml-1.5">
-                {nick}{isMe ? "(己)" : ""}{h.strokes}画
+                {nick}{isMe ? "(己)" : ""}{h.strokes}画{headStr}{tailStr}
               </span>
             );
           })}
+        </div>
+      )}
+
+      {/* 双生 · 命与猜词次数面板 */}
+      {isShuangsheng && (
+        <div className="shrink-0 mx-5 mb-2 px-3 py-2 rounded-sm border border-gold-soft/30 bg-ink-soft/40">
+          {shuangLocked ? (
+            <span className="font-sub text-cinnabar-light text-[11px]">
+              双生 · 双形态满命（{view.myLives}命）· 失一命后方可猜词
+            </span>
+          ) : (
+            <span className="font-sub text-gold/80 text-[11px]">
+              双生 · {view.myDualForm === "double" ? "双形态" : "单形态"} · 命 {view.myLives}
+              {view.myDualForm === "double" ? "/2" : "/1"}
+              {" · 本轮可猜 "}{guessesLeft}/{view.myGuessesPerRound}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* 借命 · 替死鬼面板（第3子轮起、技能未发动时可指定） */}
+      {isJieming && (
+        <div className="shrink-0 mx-5 mb-2 px-3 py-2 rounded-sm border border-gold-soft/30 bg-ink-soft/40">
+          {view.blinded ? (
+            <span className="font-sub text-cinnabar-light text-[11px]">
+              借命 · 替死已发动 · 不知所得之词 · 可自猜（慎防自杀）
+            </span>
+          ) : view.scapegoatUsed ? (
+            <span className="font-sub text-paper/45 text-[11px]">
+              借命 · 技能已发动，不可再指定替死鬼
+            </span>
+          ) : canPickScapegoat ? (
+            <div>
+              <p className="font-sub text-gold/80 text-[11px] mb-1.5">
+                借命 · 择一替死鬼{view.scapegoatTarget !== null ? "（可改选）" : ""}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {view.players.filter((p) => p.alive && p.id !== view.myId).map((p) => {
+                  const sel = view.scapegoatTarget === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => scapegoat(p.id)}
+                      className={cn(
+                        "px-2.5 py-1 rounded-sm border font-sub text-[11px] transition-colors",
+                        sel
+                          ? "border-cinnabar bg-cinnabar/20 text-cinnabar-light"
+                          : "border-gold-soft/30 bg-ink-soft/50 text-paper/70 active:bg-gold-soft/15",
+                      )}
+                    >
+                      {p.nickname}{sel ? " · 替死" : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <span className="font-sub text-paper/45 text-[11px]">
+              借命 · 第3子轮起可指定替死鬼
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* 省笔 · 自动拭字计数 */}
+      {view.myRole === "省笔" && view.shengbiWiped > 0 && (
+        <div className="shrink-0 mx-5 mb-2 px-3 py-2 rounded-sm border border-gold-soft/30 bg-ink-soft/40">
+          <span className="font-sub text-gold/70 text-[11px]">
+            省笔 · 本局已拭去 {view.shengbiWiped} 字
+          </span>
         </div>
       )}
 
@@ -313,7 +451,11 @@ export default function Play() {
 
         {readOnly && !eliminated && (
           <div className="text-center text-paper/45 text-sm font-sub py-4 animate-inkfade">
-            已提交 · 静候他人猜词…
+            {view.phase === "reveal"
+              ? "复盘公屏中 · 可切公屏查看众人所猜"
+              : shuangLocked
+                ? "双形态满命 · 失一命后方可猜词…"
+                : "已提交 · 静候他人猜词…"}
           </div>
         )}
       </div>
@@ -355,6 +497,15 @@ export default function Play() {
                 拭 去 一 字
               </button>
             )}
+            {/* 自杀：借命在场时可自猜己词，反噬借命或自裁 */}
+            {view.canSuicide && (
+              <button
+                onClick={() => suicide()}
+                className="w-full py-2.5 rounded-sm tracking-[0.3em] text-sm border border-cinnabar/60 bg-cinnabar/10 text-cinnabar-light active:bg-cinnabar/20"
+              >
+                自 裁（自猜己词）
+              </button>
+            )}
             {hasSel ? (
               <>
                 <button
@@ -362,7 +513,9 @@ export default function Play() {
                   disabled={selLen < 2}
                   className="seal-btn w-full py-3 rounded-sm tracking-[0.3em]"
                 >
-                  {selLen >= 2 ? `猜此段 · ${selLen}字` : `拖动蓝点扩到2字（${selLen}/2）`}
+                  {selLen >= 2
+                    ? `猜此段 · ${selLen}字${view.myGuessesPerRound > 1 ? `（剩余${guessesLeft}猜）` : ""}`
+                    : `拖动蓝点扩到2字（${selLen}/2）`}
                 </button>
                 <button onClick={clearSel} className="ghost-btn w-full py-2 rounded-sm text-sm">
                   清除选区
@@ -374,7 +527,11 @@ export default function Play() {
                   ? view.canPrune
                     ? "可拭去一字 · 或长按故事选段猜词"
                     : "长按故事选段 · 拖两端蓝点调长度"
-                  : "长按故事选段 · 拖两端蓝点调长度"}
+                  : view.blinded
+                    ? "不知己词 · 长按选段猜词（慎防自猜）"
+                    : view.myGuessesPerRound > 1
+                      ? `本轮可猜 ${guessesLeft}/${view.myGuessesPerRound} · 长按故事选段`
+                      : "长按故事选段 · 拖两端蓝点调长度"}
               </p>
             )}
           </div>
@@ -392,6 +549,23 @@ function BetPanel() {
 
   return (
     <div className="space-y-2">
+      {/* 押司死后见词：展示所有玩家注入词（便于押注决策） */}
+      {view.revealedWords && view.revealedWords.length > 0 && (
+        <div className="mb-2 px-3 py-2 rounded-sm border border-jade/40 bg-jade/10">
+          <p className="font-sub text-jade text-[11px] mb-1.5">押司 · 众人注入词（死后方知）：</p>
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {view.revealedWords.map((r) => {
+              const isMe = r.ownerId === view.myId;
+              return (
+                <span key={r.ownerId} className="text-paper/80 text-[11px] font-sub">
+                  {r.nickname}{isMe ? "(己)" : ""}：
+                  <span className="text-cinnabar-light font-serifsc tracking-wider">{r.word}</span>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <p className="text-center text-gold font-sub text-xs tracking-wider">
         押司 · 押注一存活者 · 存活+1 / 出局-1
       </p>

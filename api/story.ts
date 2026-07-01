@@ -158,14 +158,15 @@ export async function generateDuanmoCandidates(
     `3. 必须是语义自然、可独立成词的片段（如成语、名词、动词短语、意象词等），不要是把无关字硬拼起来的乱码。\n` +
     `4. 不要与这些已选词重叠：${avoidWords.map((w) => `"${w}"`).join('、')}。\n` +
     `5. 候选之间互相不要重叠。\n` +
-    `6. 只输出一个 JSON 字符串数组，例如 ["夜深人静","月隐云后"]，不要任何解释、不要代码块标记。\n\n` +
+    `6. 鼓励多形态切分：对于四字成语或短语（如"天下无敌"），可同时输出其两字、三字、四字多种切分形式（如"天下"、"无敌"、"天下无敌"），分别作为独立候选列入数组。这样能让候选长度分布更丰富。\n` +
+    `7. 只输出一个 JSON 字符串数组，例如 ["夜深人静","月隐云后","夜深","人静"]，不要任何解释、不要代码块标记。\n\n` +
     `叙事原文：\n${storyText}`;
   try {
     const resp = await client.chat.completions.create({
       model: 'deepseek-chat',
       messages: [{ role: 'user', content: user }],
       temperature: 0.7,
-      max_tokens: 512,
+      max_tokens: 768,
     });
     const raw = (resp.choices?.[0]?.message?.content || '').trim();
     // 容错提取首个 JSON 数组
