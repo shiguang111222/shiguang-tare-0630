@@ -6,6 +6,7 @@ import { playSound, playVoice } from "@/lib/sound";
 
 const MAX_LEN = 4;
 const LONG_PRESS_MS = 450;
+const PUNCT = /[，。！？、；：""''「」（）()\[\]【】…—\-\s,.;:!?]/;
 
 export default function Play() {
   const view = useGame((s) => s.view)!;
@@ -105,27 +106,50 @@ export default function Play() {
   const selLen = hasSel ? selEnd! - selStart! + 1 : 0;
 
   // 找到字符索引落在哪个字符上（基于 data-idx）
+  // 跨行换行时 elementFromPoint 可能命中字间缝隙/父容器，退化为最近矩形匹配
   const idxFromPoint = (x: number, y: number): number | null => {
     const el = document.elementFromPoint(x, y) as HTMLElement | null;
-    if (!el) return null;
-    const attr = el.getAttribute("data-idx");
-    if (attr === null) return null;
-    const n = parseInt(attr, 10);
-    return isNaN(n) ? null : n;
+    if (el) {
+      const attr = el.getAttribute("data-idx");
+      if (attr !== null) {
+        const n = parseInt(attr, 10);
+        if (!isNaN(n)) return n;
+      }
+    }
+    // 兜底：遍历字元矩形，命中或最近者
+    let best: number | null = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < view.storyText.length; i++) {
+      const r = charRefs.current[i]?.getBoundingClientRect();
+      if (!r) continue;
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return i;
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const d = Math.hypot(x - cx, y - cy);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    return best;
   };
+
+  // 标点判断：选词起手与拖拽均跳过标点，避免选区含标点
+  const isPunct = (i: number) => PUNCT.test(view.storyText[i]);
 
   // 长按起手：触摸开始时记录索引并启动定时器
   const onCharTouchStart = (i: number) => {
     if (readOnly || isDuanmo) return;
+    if (isPunct(i)) return; // 标点不可起选
     if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
     longPressStartIdx.current = i;
     longPressTimer.current = window.setTimeout(() => {
-      // 长按触发：以该字为起点，向后选 2 字（若到末尾则向前）
+      // 长按触发：以该字为起点，向后选 2 字（若到末尾或下一字为标点则向前）
       const len = view.storyText.length;
       let a = i;
       let b = i;
-      if (i + 1 < len) b = i + 1;
-      else if (i - 1 >= 0) a = i - 1;
+      if (i + 1 < len && !isPunct(i + 1)) b = i + 1;
+      else if (i - 1 >= 0 && !isPunct(i - 1)) a = i - 1;
       setSelStart(a);
       setSelEnd(b);
       if (navigator.vibrate) navigator.vibrate(15);
@@ -143,13 +167,14 @@ export default function Play() {
   // PC 鼠标：按下立即起选区（不需要长按）
   const onCharMouseDown = (i: number) => {
     if (readOnly || isDuanmo) return;
+    if (isPunct(i)) return; // 标点不可起选
     // 仅在无选区或点在选区外时重置；点在手柄上的逻辑由手柄接管
     if (hasSel && i >= selStart! && i <= selEnd!) return;
     const len = view.storyText.length;
     let a = i;
     let b = i;
-    if (i + 1 < len) b = i + 1;
-    else if (i - 1 >= 0) a = i - 1;
+    if (i + 1 < len && !isPunct(i + 1)) b = i + 1;
+    else if (i - 1 >= 0 && !isPunct(i - 1)) a = i - 1;
     setSelStart(a);
     setSelEnd(b);
   };
@@ -168,6 +193,7 @@ export default function Play() {
       if (!dragHandle.current || !hasSel) return;
       const idx = idxFromPoint(e.clientX, e.clientY);
       if (idx === null) return;
+      if (isPunct(idx)) return; // 标点不可纳入选区
       e.preventDefault();
       const start = selStart!;
       const end = selEnd!;
